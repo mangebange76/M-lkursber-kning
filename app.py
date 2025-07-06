@@ -107,8 +107,10 @@ with tab1:
                 prices = calculate_price_targets(t.info["totalRevenue"], [y1, y2, y3], ps, aktier)
 
                 df = load_data()
-                tidigare = df[df["Ticker"] == ticker][["Målkurs Y1", "Målkurs Y2", "Målkurs Y3"]].values.tolist()
-                tidigare = tidigare[0] if tidigare else ["", "", ""]
+                if not df.empty and "Ticker" in df.columns and ticker in df["Ticker"].values:
+                    tidigare = df[df["Ticker"] == ticker][["Målkurs Y1", "Målkurs Y2", "Målkurs Y3"]].values.tolist()[0]
+                else:
+                    tidigare = ["", "", ""]
 
                 row = {
                     "Ticker": ticker,
