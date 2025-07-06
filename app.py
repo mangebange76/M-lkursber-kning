@@ -2,12 +2,14 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import gspread
+import json
 from datetime import datetime
 from oauth2client.service_account import ServiceAccountCredentials
 
 # --- Google Sheets-anslutning ---
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["GOOGLE_CREDENTIALS"], scope)
+creds_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
+creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 client = gspread.authorize(creds)
 
 SHEET_NAME = "Aktiedata"
@@ -24,9 +26,6 @@ if not MAIN_SHEET.get_all_values():
     MAIN_SHEET.append_row(HEADERS)
 
 # --- Hjälpfunktioner ---
-def get_current_year():
-    return datetime.today().year
-
 def load_data():
     records = MAIN_SHEET.get_all_records()
     df = pd.DataFrame(records)
@@ -41,8 +40,6 @@ def save_data(row):
 
 def get_growth_estimates(ticker_obj):
     try:
-        cal = ticker_obj.calendar
-        return_dates = cal.columns.tolist()
         y1 = float(ticker_obj.analysis.loc["Revenue Estimate"].iloc[0]["Growth"].strip('%')) / 100
         y2 = float(ticker_obj.analysis.loc["Revenue Estimate"].iloc[1]["Growth"].strip('%')) / 100
         y3 = (y1 + y2) / 2
