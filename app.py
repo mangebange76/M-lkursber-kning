@@ -51,27 +51,32 @@ def save_data(row):
 
 def get_growth_estimates(ticker_obj):
     try:
-        y1 = float(ticker_obj.analysis.loc["Revenue Estimate"].iloc[0]["Growth"].strip('%')) / 100
-        y2 = float(ticker_obj.analysis.loc["Revenue Estimate"].iloc[1]["Growth"].strip('%')) / 100
+        df = ticker_obj.analysis
+        g1 = df.iloc[0]["Growth"]
+        g2 = df.iloc[1]["Growth"]
+        if "%" in g1 and "%" in g2:
+            y1 = float(g1.strip('%')) / 100
+            y2 = float(g2.strip('%')) / 100
+        else:
+            raise ValueError
         y3 = (y1 + y2) / 2
         return round(y1, 3), round(y2, 3), round(y3, 3)
     except:
         return 0.15, 0.15, 0.15
 
 def calculate_ttm(ticker_obj):
-    hist = ticker_obj.history(period="1y")
-    info = ticker_obj.info
-    currency = info.get("currency", "USD")
-    shares = info.get("sharesOutstanding", None)
-    if shares is None or shares == 0:
-        return None
-
     try:
-        revenue_ttm = info["totalRevenue"]
-        eps_ttm = info["trailingEps"]
+        hist = ticker_obj.history(period="5d")
+        info = ticker_obj.info
         price_now = hist["Close"][-1]
-        ps = round((price_now * shares) / revenue_ttm, 2) if revenue_ttm else None
-        pe = round(price_now / eps_ttm, 2) if eps_ttm else None
+        shares = info.get("sharesOutstanding", 0)
+        revenue = info.get("totalRevenue", None)
+        eps = info.get("trailingEps", None)
+        currency = info.get("currency", "USD")
+        if not revenue or not eps or eps == 0 or shares == 0:
+            return None
+        ps = round((price_now * shares) / revenue, 2)
+        pe = round(price_now / eps, 2)
         return round(price_now, 2), ps, pe, shares, currency
     except:
         return None
@@ -102,38 +107,42 @@ with tab1:
             try:
                 t = yf.Ticker(ticker)
                 namn = t.info.get("shortName", "Okänt bolag")
-                kurs, ps, pe, aktier, valuta = calculate_ttm(t)
-                y1, y2, y3 = get_growth_estimates(t)
-                prices = calculate_price_targets(t.info["totalRevenue"], [y1, y2, y3], ps, aktier)
-
-                df = load_data()
-                if not df.empty and "Ticker" in df.columns and ticker in df["Ticker"].values:
-                    tidigare = df[df["Ticker"] == ticker][["Målkurs Y1", "Målkurs Y2", "Målkurs Y3"]].values.tolist()[0]
+                resultat = calculate_ttm(t)
+                if not resultat:
+                    st.error("Kunde inte hämta nyckeltal (P/S, P/E eller kurs).")
                 else:
-                    tidigare = ["", "", ""]
+                    kurs, ps, pe, aktier, valuta = resultat
+                    y1, y2, y3 = get_growth_estimates(t)
+                    prices = calculate_price_targets(t.info["totalRevenue"], [y1, y2, y3], ps, aktier)
 
-                row = {
-                    "Ticker": ticker,
-                    "Namn": namn,
-                    "Kategori": kategori,
-                    "Valuta": valuta,
-                    "Antal aktier": aktier,
-                    "Senast uppdaterad": datetime.today().strftime("%Y-%m-%d"),
-                    "Tillväxt Y1": y1,
-                    "Tillväxt Y2": y2,
-                    "Tillväxt Y3": y3,
-                    "Målkurs Y1": prices[0],
-                    "Målkurs Y2": prices[1],
-                    "Målkurs Y3": prices[2],
-                    "Tidigare målkurs Y1": tidigare[0],
-                    "Tidigare målkurs Y2": tidigare[1],
-                    "Tidigare målkurs Y3": tidigare[2],
-                    "Aktuell kurs": kurs,
-                    "P/S TTM": ps,
-                    "P/E TTM": pe
-                }
-                save_data(row)
-                st.success(f"{ticker} ({namn}) sparades/uppdaterades.")
+                    df = load_data()
+                    if not df.empty and "Ticker" in df.columns and ticker in df["Ticker"].values:
+                        tidigare = df[df["Ticker"] == ticker][["Målkurs Y1", "Målkurs Y2", "Målkurs Y3"]].values.tolist()[0]
+                    else:
+                        tidigare = ["", "", ""]
+
+                    row = {
+                        "Ticker": ticker,
+                        "Namn": namn,
+                        "Kategori": kategori,
+                        "Valuta": valuta,
+                        "Antal aktier": aktier,
+                        "Senast uppdaterad": datetime.today().strftime("%Y-%m-%d"),
+                        "Tillväxt Y1": y1,
+                        "Tillväxt Y2": y2,
+                        "Tillväxt Y3": y3,
+                        "Målkurs Y1": prices[0],
+                        "Målkurs Y2": prices[1],
+                        "Målkurs Y3": prices[2],
+                        "Tidigare målkurs Y1": tidigare[0],
+                        "Tidigare målkurs Y2": tidigare[1],
+                        "Tidigare målkurs Y3": tidigare[2],
+                        "Aktuell kurs": kurs,
+                        "P/S TTM": ps,
+                        "P/E TTM": pe
+                    }
+                    save_data(row)
+                    st.success(f"{ticker} ({namn}) sparades/uppdaterades.")
             except Exception as e:
                 st.error(f"Fel: {e}")
 
@@ -143,7 +152,7 @@ with tab2:
         st.info("Inga bolag inlagda ännu.")
     else:
         sort_key = st.selectbox("Sortera på undervärdering enligt:", ["Målkurs Y1", "Målkurs Y2", "Målkurs Y3"])
-        df["Undervärdering"] = (df[sort_key] - df["Aktuell kurs"]) / df["Aktuell kurs"]
+        df["Undervärdering"] = (df[sort_key].astype(float) - df["Aktuell kurs"].astype(float)) / df["Aktuell kurs"].astype(float)
         df = df.sort_values("Undervärdering", ascending=False).reset_index(drop=True)
 
         index = st.number_input("Visa bolag #", min_value=1, max_value=len(df), value=1) - 1
@@ -151,15 +160,15 @@ with tab2:
 
         st.subheader(f"{row['Namn']} ({row['Ticker']})")
         st.markdown(f"**Kategori:** {row['Kategori']}")
-        st.markdown(f"**Aktuell kurs:** {row['Aktuell kurs']} {row['Valuta']}")
-        st.markdown(f"**P/S TTM:** {row['P/S TTM']} &nbsp;&nbsp; **P/E TTM:** {row['P/E TTM']}")
+        st.markdown(f"**Aktuell kurs:** {float(row['Aktuell kurs']):,.2f} {row['Valuta']}")
+        st.markdown(f"**P/S TTM:** {float(row['P/S TTM']):,.2f} &nbsp;&nbsp; **P/E TTM:** {float(row['P/E TTM']):,.2f}")
         st.markdown("---")
 
         st.markdown("### 📈 Tillväxt och målkurs")
         for i, år in enumerate(["Y1", "Y2", "Y3"]):
             st.markdown(f"""
-            **Tillväxt {år}:** {row[f'Tillväxt {år}']*100:.1f}%  
-            **Målkurs {år}:** {row[f'Målkurs {år}']}  
+            **Tillväxt {år}:** {float(row[f'Tillväxt {år}'])*100:.1f}%  
+            **Målkurs {år}:** {float(row[f'Målkurs {år}']):,.2f}  
             _Tidigare målkurs:_ {row[f'Tidigare målkurs {år}']}  
             """)
 
