@@ -1,20 +1,21 @@
-# 📊 Aktieanalys-app – P/S & P/E målkurs
+# 📈 Aktieanalys – Målkursberäkning
 
-Denna Streamlit-app låter dig analysera aktier baserat på TTM P/S och framtida omsättningstillväxt. Appen beräknar framtida målkurs för tre år (Y1–Y3) och sorterar bolag efter undervärdering.
+En Streamlit-app för att:
+- Hämta finansiell data från Yahoo Finance
+- Beräkna P/S och P/E TTM
+- Estimera framtida målkurs för 2025–2027
+- Spara och uppdatera bolag i Google Sheets
 
-## 🚀 Funktioner
+## ✅ Funktioner
+- Automatisk kontroll och skapande av rubriker i kalkylark
+- Automatisk analys från ticker
+- Tillväxtjusterad målkurs
+- Sortering och bläddring mellan bolag
 
-- Lägg till eller uppdatera bolag (ticker, namn, kategori)
-- Automatisk hämtning av:
-  - Kurs, omsättning, EPS
-  - TTM P/S och P/E
-  - Tillväxt för Y1 & Y2 (från Yahoo Finance)
-- Extrapolering av tillväxt för Y3
-- Målkursberäkningar för tre år
-- Undervärderingssortering och bolagsbläddring
-- Data sparas i Google Sheets
+## 🚀 Så kör du appen
+1. Lägg in din `secrets.toml` i Streamlit Cloud med `GOOGLE_CREDENTIALS` och `SPREADSHEET_URL`
+2. Dela ditt Google Sheet offentligt med redigeringsrättigheter
+3. Starta appen i Streamlit
 
-## 🛠️ Installation
-
-```bash
-pip install -r requirements.txt
+## 🔒 Säkerhet
+Nycklarna hanteras via `st.secrets` – inga känsliga uppgifter ska ligga direkt i koden.
