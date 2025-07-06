@@ -20,18 +20,19 @@ RUBRIKER = ["Ticker", "Namn", "Kategori", "Valuta", "Antal aktier", "Senast uppd
             "Tidigare målkurs Y1", "Tidigare målkurs Y2", "Tidigare målkurs Y3",
             "Aktuell kurs", "P/S TTM", "P/E TTM"]
 
-# --- Öppna/kontrollera kalkylbladet ---
+# --- Öppna eller skapa worksheet ---
 SHEET = client.open(SHEET_NAME)
 if "Bolag" in [ws.title for ws in SHEET.worksheets()]:
     MAIN_SHEET = SHEET.worksheet("Bolag")
 else:
     MAIN_SHEET = SHEET.add_worksheet(title="Bolag", rows="1000", cols="30")
 
-# --- Kontrollera och uppdatera rubriker om de saknas eller är fel ---
+# --- Kontrollera och skapa rubriker vid behov ---
 def kontrollera_och_uppdatera_rubriker():
     befintliga = MAIN_SHEET.row_values(1)
     if befintliga != RUBRIKER:
-        MAIN_SHEET.delete_rows(1)
+        if befintliga:
+            MAIN_SHEET.delete_rows(1)
         MAIN_SHEET.insert_row(RUBRIKER, index=1)
 
 kontrollera_och_uppdatera_rubriker()
@@ -43,7 +44,7 @@ def load_data():
 
 def save_data(row):
     df = load_data()
-    if row["Ticker"] in df["Ticker"].values:
+    if not df.empty and "Ticker" in df.columns and row["Ticker"] in df["Ticker"].values:
         index = df[df["Ticker"] == row["Ticker"]].index[0]
         MAIN_SHEET.delete_rows(index + 2)
     MAIN_SHEET.append_row(list(row.values()))
