@@ -90,6 +90,9 @@ def calculate_price_targets(revenue_now, growths, ps_avg, shares):
         prices.append(round(price, 2))
     return prices
 
+def format_svenskt(värde, decimaler=2):
+    return f"{värde:.{decimaler}f}".replace(".", ",")
+
 # --- UI ---
 st.set_page_config(page_title="Aktieanalys", layout="centered")
 st.title("📈 Aktieanalys – Målkurs via P/S & tillväxt")
@@ -160,16 +163,19 @@ with tab2:
 
         st.subheader(f"{row['Namn']} ({row['Ticker']})")
         st.markdown(f"**Kategori:** {row['Kategori']}")
-        st.markdown(f"**Aktuell kurs:** {float(row['Aktuell kurs']):,.2f} {row['Valuta']}")
-        st.markdown(f"**P/S TTM:** {float(row['P/S TTM']):,.2f} &nbsp;&nbsp; **P/E TTM:** {float(row['P/E TTM']):,.2f}")
+        st.markdown(f"**Aktuell kurs:** {format_svenskt(float(row['Aktuell kurs']))} {row['Valuta']}")
+        st.markdown(f"**P/S TTM:** {format_svenskt(float(row['P/S TTM']))} &nbsp;&nbsp; **P/E TTM:** {format_svenskt(float(row['P/E TTM']))}")
         st.markdown("---")
 
         st.markdown("### 📈 Tillväxt och målkurs")
         for i, år in enumerate(["Y1", "Y2", "Y3"]):
+            tillväxt = str(round(float(row[f'Tillväxt {år}'])*100, 1)).replace(".", ",")
+            målkurs = format_svenskt(float(row[f"Målkurs {år}"]))
+            tidigare = str(row[f"Tidigare målkurs {år}"]).replace(".", ",")
             st.markdown(f"""
-            **Tillväxt {år}:** {float(row[f'Tillväxt {år}'])*100:.1f}%  
-            **Målkurs {år}:** {float(row[f'Målkurs {år}']):,.2f}  
-            _Tidigare målkurs:_ {row[f'Tidigare målkurs {år}']}  
+            **Tillväxt {år}:** {tillväxt}%  
+            **Målkurs {år}:** {målkurs}  
+            _Tidigare målkurs:_ {tidigare}
             """)
 
         st.markdown("---")
