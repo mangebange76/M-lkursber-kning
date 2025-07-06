@@ -12,24 +12,34 @@ creds_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 client = gspread.authorize(creds)
 
+# --- Inställningar ---
 SHEET_NAME = "Aktiedata"
-SHEET = client.open(SHEET_NAME)
-MAIN_SHEET = SHEET.worksheet("Bolag") if "Bolag" in [ws.title for ws in SHEET.worksheets()] else SHEET.add_worksheet(title="Bolag", rows="1000", cols="30")
+RUBRIKER = ["Ticker", "Namn", "Kategori", "Valuta", "Antal aktier", "Senast uppdaterad",
+            "Tillväxt Y1", "Tillväxt Y2", "Tillväxt Y3",
+            "Målkurs Y1", "Målkurs Y2", "Målkurs Y3",
+            "Tidigare målkurs Y1", "Tidigare målkurs Y2", "Tidigare målkurs Y3",
+            "Aktuell kurs", "P/S TTM", "P/E TTM"]
 
-# --- Initiera kolumner om arket är tomt ---
-HEADERS = ["Ticker", "Namn", "Kategori", "Valuta", "Antal aktier", "Senast uppdaterad",
-           "Tillväxt Y1", "Tillväxt Y2", "Tillväxt Y3",
-           "Målkurs Y1", "Målkurs Y2", "Målkurs Y3",
-           "Tidigare målkurs Y1", "Tidigare målkurs Y2", "Tidigare målkurs Y3",
-           "Aktuell kurs", "P/S TTM", "P/E TTM"]
-if not MAIN_SHEET.get_all_values():
-    MAIN_SHEET.append_row(HEADERS)
+# --- Öppna/kontrollera kalkylbladet ---
+SHEET = client.open(SHEET_NAME)
+if "Bolag" in [ws.title for ws in SHEET.worksheets()]:
+    MAIN_SHEET = SHEET.worksheet("Bolag")
+else:
+    MAIN_SHEET = SHEET.add_worksheet(title="Bolag", rows="1000", cols="30")
+
+# --- Kontrollera och uppdatera rubriker om de saknas eller är fel ---
+def kontrollera_och_uppdatera_rubriker():
+    befintliga = MAIN_SHEET.row_values(1)
+    if befintliga != RUBRIKER:
+        MAIN_SHEET.delete_rows(1)
+        MAIN_SHEET.insert_row(RUBRIKER, index=1)
+
+kontrollera_och_uppdatera_rubriker()
 
 # --- Hjälpfunktioner ---
 def load_data():
     records = MAIN_SHEET.get_all_records()
-    df = pd.DataFrame(records)
-    return df
+    return pd.DataFrame(records)
 
 def save_data(row):
     df = load_data()
