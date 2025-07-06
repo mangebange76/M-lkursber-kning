@@ -83,7 +83,6 @@ tab1, tab2 = st.tabs(["➕ Lägg till/uppdatera bolag", "📊 Analys"])
 with tab1:
     with st.form("add_form"):
         ticker = st.text_input("Ticker (ex: NVDA)").upper().strip()
-        namn = st.text_input("Bolagsnamn")
         kategori = st.text_input("Kategori/tagg (ex: AI, shipping...)")
         antal_aktier = st.number_input("Antal aktier (utestående)", min_value=1_000_000, step=100000)
         submitted = st.form_submit_button("Spara bolag")
@@ -91,6 +90,7 @@ with tab1:
         if submitted and ticker:
             try:
                 t = yf.Ticker(ticker)
+                namn = t.info.get("shortName", "Okänt bolag")
                 kurs, ps, pe, aktier, valuta = calculate_ttm(t)
                 y1, y2, y3 = get_growth_estimates(t)
                 prices = calculate_price_targets(t.info["totalRevenue"], [y1, y2, y3], ps, aktier)
@@ -120,7 +120,7 @@ with tab1:
                     "P/E TTM": pe
                 }
                 save_data(row)
-                st.success(f"{ticker} sparades/uppdaterades.")
+                st.success(f"{ticker} ({namn}) sparades/uppdaterades.")
             except Exception as e:
                 st.error(f"Fel: {e}")
 
