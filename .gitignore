@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Streamlit secrets
+.secrets/
+.streamlit/secrets.toml
+
+# Mac/OSX
+.DS_Store
+
+# Credentials
+credentials.json
