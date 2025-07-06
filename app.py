@@ -1,98 +1,167 @@
 import streamlit as st
-import pandas as pd
 import yfinance as yf
+import pandas as pd
 import gspread
-import json
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
 
-st.set_page_config(page_title="Målkursanalys", layout="centered")
+# Konfiguration
+st.set_page_config(page_title="Målkursberäkning", layout="centered")
 
-# Funktioner
-def format_svenskt(v):
-    return f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+# Google Sheets inställningar
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+creds = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["GOOGLE_CREDENTIALS"], scope)
+client = gspread.authorize(creds)
+SPREADSHEET_URL = st.secrets["SPREADSHEET_URL"]
+SHEET_NAME = "Bolag"
+SHEET = client.open_by_url(SPREADSHEET_URL).worksheet(SHEET_NAME)
 
-def convert_number(value):
+# Kolumner som krävs
+HEADERS = [
+    "Ticker", "Namn", "Valuta", "Kurs", "Aktuell kurs", "P/S TTM", "P/E TTM",
+    "Tillväxt 2025 (%)", "Tillväxt 2026 (%)", "Tillväxt 2027 (%)",
+    "Omsättning TTM", "Målkurs 2025", "Målkurs 2026", "Målkurs 2027",
+    "Senast uppdaterad"
+]
+
+# Kontrollera och skapa rubriker om de saknas eller är fel
+def ensure_headers():
+    existing = SHEET.row_values(1)
+    if existing != HEADERS:
+        SHEET.resize(rows=1)
+        SHEET.insert_row(HEADERS, 1)
+
+# Läser in datan från kalkylarket
+def load_data():
+    ensure_headers()
+    records = SHEET.get_all_records()
+    return pd.DataFrame(records)
+
+# Spara nytt bolag eller uppdatera existerande
+def save_to_sheet(data):
+    df = load_data()
+    tickers = df["Ticker"].tolist()
+    if data["Ticker"] in tickers:
+        index = tickers.index(data["Ticker"]) + 2
+        SHEET.delete_row(index)
+    row = [data.get(col, "") for col in HEADERS]
+    SHEET.append_row(row)
+
+# Konvertera decimal från t.ex. 74,41 till 74.41
+def parse_decimal(val):
     try:
-        return float(str(value).replace(",", "."))
+        if isinstance(val, str):
+            val = val.replace(",", ".")
+        return round(float(val), 2)
     except:
         return None
 
-# Google Sheets setup
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
-creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-client = gspread.authorize(creds)
+# Hämtar bolagsdata och gör beräkningar
+def analyze_ticker(ticker, growth_2027=None):
+    try:
+        ticker = ticker.upper()
+        stock = yf.Ticker(ticker)
+        info = stock.info
 
-# Öppna kalkylarket
-SPREADSHEET_URL = st.secrets["SPREADSHEET_URL"]
-SHEET_NAME = "Bolag"
-sheet = client.open_by_url(SPREADSHEET_URL).worksheet(SHEET_NAME)
+        name = info.get("longName", ticker)
+        currency = info.get("currency", "USD")
+        current_price = float(info.get("currentPrice", 0))
+        shares_outstanding = float(info.get("sharesOutstanding", 0))
+        history = stock.quarterly_financials
+        revenue_quarters = history.loc["Total Revenue"].dropna()
+        if len(revenue_quarters) < 4:
+            return None
 
-# Rubriker vi förväntar oss
-EXPECTED_HEADERS = [
-    "Ticker", "Namn", "Valuta", "Kurs", "Aktuell kurs", "P/S TTM", "P/E TTM",
-    "Tillväxt 2025 (%)", "Tillväxt 2026 (%)", "Tillväxt 2027 (%)",
-    "Omsättning TTM", "Målkurs 2025", "Målkurs 2026", "Målkurs 2027", "Senast uppdaterad"
-]
+        revenue_ttm = revenue_quarters[:4].sum()
+        ps_ttm = round((current_price * shares_outstanding) / revenue_ttm, 2)
 
-# Kontrollera rubriker utan att rubba datan
-def check_and_create_headers(sheet):
-    headers = sheet.row_values(1)
-    if headers != EXPECTED_HEADERS:
-        sheet.update('A1', [EXPECTED_HEADERS])
-    return sheet
+        earnings_history = stock.quarterly_earnings
+        eps_quarters = earnings_history["Earnings"].dropna()
+        eps_ttm = eps_quarters[:4].sum() if len(eps_quarters) >= 4 else None
+        pe_ttm = round(current_price / eps_ttm, 2) if eps_ttm and eps_ttm != 0 else None
 
-sheet = check_and_create_headers(sheet)
+        growth_2025 = info.get("revenueGrowth", 0.15)
+        growth_2026 = growth_2025 * 0.9
+        growth_2027 = growth_2027 if growth_2027 is not None else round(growth_2026 * 0.9, 2)
 
-# Ladda data från ark
-def load_data():
-    rows = sheet.get_all_records()
-    df = pd.DataFrame(rows)
-    return df
+        revenue_2025 = revenue_ttm * (1 + growth_2025)
+        revenue_2026 = revenue_2025 * (1 + growth_2026)
+        revenue_2027 = revenue_2026 * (1 + growth_2027)
 
+        avg_ps = ps_ttm
+        shares = shares_outstanding
+
+        def calc_target(revenue):
+            return round((revenue / shares) * avg_ps, 2)
+
+        target_2025 = calc_target(revenue_2025)
+        target_2026 = calc_target(revenue_2026)
+        target_2027 = calc_target(revenue_2027)
+
+        return {
+            "Ticker": ticker,
+            "Namn": name,
+            "Valuta": currency,
+            "Kurs": round(current_price, 2),
+            "Aktuell kurs": round(current_price, 2),
+            "P/S TTM": ps_ttm,
+            "P/E TTM": pe_ttm if pe_ttm else "",
+            "Tillväxt 2025 (%)": round(growth_2025 * 100, 2),
+            "Tillväxt 2026 (%)": round(growth_2026 * 100, 2),
+            "Tillväxt 2027 (%)": round(growth_2027 * 100, 2),
+            "Omsättning TTM": int(revenue_ttm),
+            "Målkurs 2025": target_2025,
+            "Målkurs 2026": target_2026,
+            "Målkurs 2027": target_2027,
+            "Senast uppdaterad": datetime.now().strftime("%Y-%m-%d")
+        }
+    except Exception as e:
+        st.error(f"Något gick fel: {e}")
+        return None
+
+# --- Gränssnitt ---
+st.title("📊 Målkursberäkning med tillväxt och multipel")
+
+with st.form("new_ticker_form"):
+    st.subheader("Lägg till eller uppdatera bolag")
+    new_ticker = st.text_input("Ange ticker (t.ex. TTD)", max_chars=10)
+    custom_growth_2027 = st.number_input("Manuell tillväxt 2027 (%)", min_value=0.0, max_value=200.0, value=20.0)
+    submitted = st.form_submit_button("Analysera och spara")
+    if submitted and new_ticker:
+        data = analyze_ticker(new_ticker, custom_growth_2027 / 100)
+        if data:
+            save_to_sheet(data)
+            st.success(f"{data['Namn']} sparad!")
+
+# Visa sorterade bolag
 df = load_data()
-
-# Visa fel om data saknas
 if df.empty:
     st.warning("❌ Inga bolag inlagda än.")
-    st.stop()
+else:
+    sort_key = st.selectbox("Sortera efter:", ["Målkurs 2025", "Målkurs 2026", "Målkurs 2027"])
+    df["Undervärdering"] = (df[sort_key] - df["Aktuell kurs"]) / df["Aktuell kurs"]
+    df = df.sort_values(by="Undervärdering", ascending=False).reset_index(drop=True)
 
-# Konvertera numeriska kolumner
-num_cols = [col for col in df.columns if "kurs" in col.lower() or "ttm" in col.lower() or "tillväxt" in col.lower() or "målkurs" in col.lower()]
-for col in num_cols:
-    df[col] = df[col].apply(convert_number)
+    if "page" not in st.session_state:
+        st.session_state.page = 0
 
-# Sortera efter undervärdering (målkurs 2027 jämfört med aktuell kurs)
-df["Undervärdering (%)"] = ((df["Målkurs 2027"] - df["Aktuell kurs"]) / df["Aktuell kurs"]) * 100
-df = df.sort_values(by="Undervärdering (%)", ascending=False).reset_index(drop=True)
+    total = len(df)
+    current = st.session_state.page
+    company = df.iloc[current]
 
-# Bläddringsfunktion
-if "bolags_index" not in st.session_state:
-    st.session_state.bolags_index = 0
+    st.markdown(f"### {company['Namn']} ({company['Ticker']})")
+    st.write(f"**Kategori:** _(ej ifyllt)_")
+    st.write(f"**Aktuell kurs:** {company['Aktuell kurs']} {company['Valuta']}")
+    st.write(f"**P/S TTM:** {company['P/S TTM']}  **P/E TTM:** {company['P/E TTM']}")
 
-def visa_bolag(index):
-    if index < 0 or index >= len(df):
-        return
+    st.markdown("### 📈 Tillväxt och målkurs")
+    for y in ["2025", "2026", "2027"]:
+        st.write(f"**Tillväxt Y{y[-1]}:** {company[f'Tillväxt {y} (%)']}%")
+        st.write(f"**Målkurs Y{y[-1]}:** {company[f'Målkurs {y}']}")
+        st.caption("Tidigare målkurs: _(ej spårad än)_")
 
-    row = df.iloc[index]
-
-    st.subheader(f"📌 {row['Namn']} ({row['Ticker']})")
-    st.markdown(f"**Aktuell kurs:** {format_svenskt(row['Aktuell kurs'])} {row['Valuta']}")
-    st.markdown(f"**P/S TTM:** {format_svenskt(row['P/S TTM'])}")
-    st.markdown(f"**P/E TTM:** {format_svenskt(row['P/E TTM'])}")
-    st.markdown(f"**Tillväxt:** 2025: {row['Tillväxt 2025 (%)']}% · 2026: {row['Tillväxt 2026 (%)']}% · 2027: {row['Tillväxt 2027 (%)']}%")
-    st.markdown(f"**Målkursar:** 2025: {format_svenskt(row['Målkurs 2025'])}, 2026: {format_svenskt(row['Målkurs 2026'])}, 2027: {format_svenskt(row['Målkurs 2027'])}")
-    st.markdown(f"**Undervärdering 2027:** {format_svenskt(row['Undervärdering (%)'])}%")
-    st.markdown(f"**Senast uppdaterad:** {row['Senast uppdaterad']}")
-
-# Bläddringsknappar
-col1, col2 = st.columns(2)
-with col1:
-    if st.button("⬅️ Föregående") and st.session_state.bolags_index > 0:
-        st.session_state.bolags_index -= 1
-with col2:
-    if st.button("➡️ Nästa") and st.session_state.bolags_index < len(df) - 1:
-        st.session_state.bolags_index += 1
-
-visa_bolag(st.session_state.bolags_index)
+    col1, col2 = st.columns(2)
+    if col1.button("⬅️ Föregående") and current > 0:
+        st.session_state.page -= 1
+    if col2.button("➡️ Nästa") and current < total - 1:
+        st.session_state.page += 1
