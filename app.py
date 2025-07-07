@@ -12,12 +12,15 @@ creds = service_account.Credentials.from_service_account_info(
 )
 client = gspread.authorize(creds)
 
-# Hämta Google Sheet
-sheet = client.open_by_url(st.secrets["SPREADSHEET_URL"])
+# Öppna kalkylark och rätt blad
+spreadsheet_url = st.secrets["SPREADSHEET_URL"]
+sheet = client.open_by_url(spreadsheet_url)
 worksheet = sheet.worksheet("Bolag")
 
-# Säkerställ rubriker
+# Förväntade rubriker
 required_headers = ["Bolag", "Ticker", "Senast uppdaterad", "Aktuell kurs", "TTM Sales", "TTM EPS"]
+
+# Läs existerande data
 data = worksheet.get_all_records()
 if not data or list(data[0].keys()) != required_headers:
     worksheet.clear()
@@ -28,7 +31,7 @@ else:
 
 st.title("Fundamental aktievärdering")
 
-# Formulär för nytt bolag
+# Formulär
 with st.form("add_stock_form"):
     ticker_input = st.text_input("Ange Ticker (t.ex. AAPL, MSFT):", "")
     submitted = st.form_submit_button("Hämta & Lägg till/uppdatera")
@@ -37,8 +40,8 @@ with st.form("add_stock_form"):
         try:
             ticker = ticker_input.upper()
             stock = yf.Ticker(ticker)
-
             info = stock.info
+
             current_price = round(info.get("currentPrice", 0), 2)
             ttm_sales = round(info.get("totalRevenue", 0) / 1e6, 2) if info.get("totalRevenue") else 0
             ttm_eps = round(info.get("trailingEps", 0), 2)
