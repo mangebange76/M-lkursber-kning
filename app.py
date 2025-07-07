@@ -1,81 +1,70 @@
 import streamlit as st
 import pandas as pd
-import datetime
-import yfinance as yf
 import gspread
 from google.oauth2 import service_account
+from datetime import datetime
+import yfinance as yf
 
-# --- Autentisering ---
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+# Autentisering
+scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 creds = service_account.Credentials.from_service_account_info(
     st.secrets["GOOGLE_CREDENTIALS"], scopes=scope
 )
 client = gspread.authorize(creds)
 
-# --- Kalkylark och blad ---
-SPREADSHEET_URL = st.secrets["SPREADSHEET_URL"]
-SHEET_NAME = "Bolag"
+# Hämta Google Sheet
+sheet = client.open_by_url(st.secrets["SPREADSHEET_URL"])
+worksheet = sheet.worksheet("Bolag")
 
-sheet = client.open_by_url(SPREADSHEET_URL)
-worksheet = sheet.worksheet(SHEET_NAME)
+# Säkerställ rubriker
+required_headers = ["Bolag", "Ticker", "Senast uppdaterad", "Aktuell kurs", "TTM Sales", "TTM EPS"]
 data = worksheet.get_all_records()
-df = pd.DataFrame(data)
-
-# --- Förväntade kolumner ---
-EXPECTED_COLUMNS = [
-    "Ticker", "Bolagsnamn", "Senaste uppdatering", "Aktuell kurs",
-    "PS TTM", "PE TTM", "Tillväxt 2025", "Tillväxt 2026", "Tillväxt 2027",
-    "Målkurs 2025", "Målkurs 2026", "Målkurs 2027",
-    "PE 2026", "PE 2027", "PS 2026", "PS 2027"
-]
-
-# --- Kontrollera kolumner ---
-if df.empty or list(df.columns) != EXPECTED_COLUMNS:
+if not data or list(data[0].keys()) != required_headers:
     worksheet.clear()
-    worksheet.append_row(EXPECTED_COLUMNS)
-    df = pd.DataFrame(columns=EXPECTED_COLUMNS)
+    worksheet.append_row(required_headers)
+    df = pd.DataFrame(columns=required_headers)
+else:
+    df = pd.DataFrame(data)
 
-# --- Inmatning ---
-st.title("Aktieanalys – Målkursberäkning")
+st.title("Fundamental aktievärdering")
 
-with st.form("add_ticker_form"):
-    ticker_input = st.text_input("Ange ticker (t.ex. AAPL, MSFT)", "").strip().upper()
-    submitted = st.form_submit_button("Lägg till eller uppdatera")
+# Formulär för nytt bolag
+with st.form("add_stock_form"):
+    ticker_input = st.text_input("Ange Ticker (t.ex. AAPL, MSFT):", "")
+    submitted = st.form_submit_button("Hämta & Lägg till/uppdatera")
 
-if submitted and ticker_input:
-    try:
-        ticker_obj = yf.Ticker(ticker_input)
-        hist = ticker_obj.history(period="1d")
-        info = ticker_obj.info
-        current_price = round(hist["Close"].iloc[-1], 2)
-        company_name = info.get("shortName", "")
+    if submitted and ticker_input:
+        try:
+            ticker = ticker_input.upper()
+            stock = yf.Ticker(ticker)
 
-        today = datetime.datetime.today().strftime("%Y-%m-%d")
+            info = stock.info
+            current_price = round(info.get("currentPrice", 0), 2)
+            ttm_sales = round(info.get("totalRevenue", 0) / 1e6, 2) if info.get("totalRevenue") else 0
+            ttm_eps = round(info.get("trailingEps", 0), 2)
+            name = info.get("shortName", "Okänt")
+            now = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-        new_row = {
-            "Ticker": ticker_input,
-            "Bolagsnamn": company_name,
-            "Senaste uppdatering": today,
-            "Aktuell kurs": current_price,
-            "PS TTM": "", "PE TTM": "",
-            "Tillväxt 2025": "", "Tillväxt 2026": "", "Tillväxt 2027": "",
-            "Målkurs 2025": "", "Målkurs 2026": "", "Målkurs 2027": "",
-            "PE 2026": "", "PE 2027": "", "PS 2026": "", "PS 2027": ""
-        }
+            new_data = {
+                "Bolag": name,
+                "Ticker": ticker,
+                "Senast uppdaterad": now,
+                "Aktuell kurs": current_price,
+                "TTM Sales": ttm_sales,
+                "TTM EPS": ttm_eps
+            }
 
-        existing_idx = df.index[df["Ticker"] == ticker_input].tolist()
+            if ticker in df["Ticker"].values:
+                row_idx = df[df["Ticker"] == ticker].index[0] + 2
+                for i, key in enumerate(required_headers):
+                    worksheet.update_cell(row_idx, i + 1, new_data[key])
+                st.success(f"{ticker} uppdaterad.")
+            else:
+                worksheet.append_row([new_data[h] for h in required_headers])
+                st.success(f"{ticker} tillagd.")
+        except Exception as e:
+            st.error(f"Något gick fel: {e}")
 
-        if existing_idx:
-            worksheet.delete_rows(existing_idx[0] + 2)  # +2 p.g.a. header + 0-index
-            worksheet.insert_row(list(new_row.values()), existing_idx[0] + 2)
-        else:
-            worksheet.append_row(list(new_row.values()))
-
-        st.success(f"{ticker_input} uppdaterades.")
-
-    except Exception as e:
-        st.error(f"Något gick fel: {e}")
-
-# --- Visa nuvarande databas ---
-st.subheader("Databas (senaste)")
+# Visa tabell
+st.subheader("Aktiedata från Google Sheet")
 st.dataframe(df)
