@@ -124,87 +124,103 @@ with st.form("add_stock_form"):
             worksheet.append_row(list(ny_rad.keys()))
             worksheet.append_rows(df.values.tolist())
 
-# === VISNING & NAVIGATION ===
+# === Del 4 ===
 
-st.header("📊 Värderingsvy")
+try:
+    st.header("📊 Värderingsvy")
 
-if not df.empty:
-    val_år = st.selectbox("Välj år att sortera efter undervärdering:", [2025, 2026, 2027])
-    malkurs_kolumn = f"Målkurs {val_år}"
+    sorteringsår = st.selectbox("Sortera undervärdering baserat på:", [2025, 2026, 2027])
 
-    if malkurs_kolumn in df.columns:
-        df["Undervärdering"] = round((df[malkurs_kolumn] - df["Aktuell kurs"]) / df["Aktuell kurs"] * 100, 2)
-        visnings_df = df.sort_values(by="Undervärdering", ascending=False).reset_index(drop=True)
+    # Visa bolag sorterat efter undervärdering (baserat på vald år)
+    if not df.empty:
+        sorteringskolumn = f"Undervärdering {sorteringsår}"
+        if sorteringskolumn in df.columns:
+            visningsindex = st.session_state.get("visningsindex", 0)
+            df_sorted = df.sort_values(by=sorteringskolumn, ascending=False).reset_index(drop=True)
 
-        if "visnings_index" not in st.session_state:
-            st.session_state.visnings_index = 0
+            if visningsindex >= len(df_sorted):
+                visningsindex = 0
 
-        bolag = visnings_df.iloc[st.session_state.visnings_index]
+            bolag_data = df_sorted.loc[visningsindex]
+            st.write(f"**{bolag_data['Bolag']} ({bolag_data['Ticker']})**")
+            st.metric("Aktuell kurs", f"${bolag_data['Aktuell kurs']:.2f}")
+            st.metric("Snitt P/S", f"{bolag_data['Snitt P/S 4Q']:.2f}")
+            st.metric(f"Målkurs {sorteringsår}", f"${bolag_data[f'Målkurs {sorteringsår}']:.2f}")
 
-        st.subheader(f"{bolag['Bolag']} ({bolag['Ticker']})")
-        st.write(f"Aktuell kurs: {bolag['Aktuell kurs']} USD")
-        st.write(f"P/S Snitt: {bolag['P/S Snitt']}")
-        st.write(f"Tillväxt 2025: {bolag['Tillväxt 2025 (%)']}%")
-        st.write(f"Tillväxt 2026: {bolag['Tillväxt 2026 (%)']}%")
-        st.write(f"Tillväxt 2027: {bolag['Tillväxt 2027 (%)']}%")
+            # Navigering
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("⬅️ Föregående"):
+                    st.session_state.visningsindex = (visningsindex - 1) % len(df_sorted)
+            with col2:
+                if st.button("➡️ Nästa"):
+                    st.session_state.visningsindex = (visningsindex + 1) % len(df_sorted)
 
-        st.write(f"Målkurs 2025: {bolag['Målkurs 2025']} USD")
-        st.write(f"Målkurs 2026: {bolag['Målkurs 2026']} USD")
-        st.write(f"Målkurs 2027: {bolag['Målkurs 2027']} USD")
+except Exception as e:
+    st.error(f"Fel i värderingsvyn: {e}")
 
-        st.write(f"Undervärdering {val_år}: {bolag['Undervärdering']} %")
-
-        col1, col2 = st.columns([1, 1])
-        with col1:
-            if st.button("⬅️ Föregående") and st.session_state.visnings_index > 0:
-                st.session_state.visnings_index -= 1
-        with col2:
-            if st.button("➡️ Nästa") and st.session_state.visnings_index < len(visnings_df) - 1:
-                st.session_state.visnings_index += 1
-    else:
-        st.warning(f"Kolumnen '{malkurs_kolumn}' saknas i datan.")
-else:
-    st.info("Inga bolag inlagda ännu.")
-
-# === INVESTERINGSREKOMMENDATION ===
+# === Del 5 ===
 
 st.header("💰 Investeringsförslag")
 
-if not df.empty:
-    kapital = st.number_input("Ange tillgängligt kapital (SEK):", min_value=0, value=1000, step=100)
+tillgängligt_kapital = st.number_input("Ange tillgängligt kapital (SEK)", min_value=0, step=100, value=1000)
 
-    # Valfri årssats att grunda målkurs på
-    invest_år = st.selectbox("Beräkna på målkurs för:", [2025, 2026, 2027])
-    malkurs_kolumn = f"Målkurs {invest_år}"
+if "Senast föreslaget bolag" not in st.session_state:
+    st.session_state["Senast föreslaget bolag"] = None
 
-    if malkurs_kolumn in df.columns:
-        df["Uppvärderingspotential"] = df[malkurs_kolumn] / df["Aktuell kurs"]
+# Få fram bästa undervärderade bolag
+try:
+    if not df.empty and "Undervärdering 2025" in df.columns:
+        df_invest = df[df["Aktuell kurs"] > 0].copy()
+        df_invest = df_invest.sort_values(by="Undervärdering 2025", ascending=False)
 
-        bäst = df[df["Uppvärderingspotential"] > 1].sort_values(by="Uppvärderingspotential", ascending=False)
-        if not bäst.empty:
-            kandidat = bäst.iloc[0]
-            kurs = kandidat["Aktuell kurs"]
-            ticker = kandidat["Ticker"]
-            bolag = kandidat["Bolag"]
-            målkurs = kandidat[malkurs_kolumn]
-            p_s = kandidat["P/S Snitt"]
+        for _, row in df_invest.iterrows():
+            bolag = row["Bolag"]
+            ticker = row["Ticker"]
+            kurs = row["Aktuell kurs"]
 
-            st.subheader("📈 Bästa köpkandidat just nu")
-            st.write(f"**{bolag} ({ticker})**")
-            st.write(f"Aktuell kurs: {kurs} USD")
-            st.write(f"Målkurs {invest_år}: {målkurs} USD")
-            st.write(f"Uppvärderingspotential: {round((målkurs / kurs - 1) * 100, 2)}%")
-
-            pris_i_sek = kurs * 10.5  # Grovväxling
-            if kapital >= pris_i_sek:
-                antal = int(kapital // pris_i_sek)
-                st.success(f"📌 Köp {antal} st aktier i **{ticker}** ({round(antal * pris_i_sek)} kr)")
-            else:
-                st.warning(f"💸 Aktiekursen ({round(pris_i_sek)} kr) överstiger ditt kapital ({kapital} kr).")
-                st.info(f"Behöver minst **{round(pris_i_sek - kapital)} kr** till för att köpa 1 aktie i {ticker}.")
+            if kurs <= tillgängligt_kapital:
+                st.success(f"💡 Köpförslag: **{bolag} ({ticker})** – aktuell kurs: ${kurs:.2f}")
+                st.session_state["Senast föreslaget bolag"] = ticker
+                break
         else:
-            st.info("Inget bolag har uppvärderingspotential just nu.")
-    else:
-        st.warning(f"Saknar kolumn: {malkurs_kolumn}")
-else:
-    st.info("Ingen data att analysera.")
+            dyraste = df_invest.iloc[0]
+            st.warning(
+                f"Inget bolag kan köpas för {tillgängligt_kapital} SEK.\n"
+                f"Förslag: **{dyraste['Bolag']} ({dyraste['Ticker']})** kostar ${dyraste['Aktuell kurs']:.2f}. "
+                f"Du behöver mer kapital."
+            )
+
+except Exception as e:
+    st.error(f"Fel i investeringsförslag: {e}")
+
+# === Del 6: main() och appstart ===
+
+def main():
+    st.set_page_config(page_title="Aktievärdering", layout="wide")
+
+    st.markdown(
+        """
+        <style>
+        section[data-testid="stSidebar"] {
+            background-color: #f0f2f6;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.sidebar.title("📁 Meny")
+    view = st.sidebar.radio("Välj vy", ["📄 Bolagsdata", "📊 Värderingsvy", "💰 Investeringsförslag"])
+
+    if view == "📄 Bolagsdata":
+        st.experimental_rerun()  # Detta låter användaren välja vy och få rätt vy att visas (kan tas bort om statisk app)
+    elif view == "📊 Värderingsvy":
+        pass  # Hanteras i Del 4
+    elif view == "💰 Investeringsförslag":
+        pass  # Hanteras i Del 5
+
+
+# === Starta appen ===
+if __name__ == "__main__":
+    main()
