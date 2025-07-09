@@ -1,13 +1,9 @@
-# ----------------------- Del 1 -----------------------
-
 import streamlit as st
 import pandas as pd
+import yfinance as yf
 import gspread
 from google.oauth2 import service_account
 from datetime import datetime
-import yfinance as yf
-
-st.set_page_config(page_title="Aktievärdering", layout="centered")
 
 # Autentisering
 scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
@@ -16,36 +12,26 @@ creds = service_account.Credentials.from_service_account_info(
 )
 client = gspread.authorize(creds)
 
-# Hämta Google Sheet
+# Öppna Google Sheet
 spreadsheet_url = st.secrets["SPREADSHEET_URL"]
 sheet = client.open_by_url(spreadsheet_url)
 worksheet = sheet.worksheet("Bolag")
 
-# Obligatoriska kolumner
-required_headers = [
-    "Bolag", "Ticker", "Senast uppdaterad", "Aktuell kurs", "TTM Sales", "TTM EPS",
-    "Antal aktier", "Omsättning 2023", "Omsättning 2024", "Omsättning 2025", "Omsättning 2026",
-    "P/S snitt", "Tillväxt 2024", "Tillväxt 2025", "Tillväxt 2026"
-]
+# Läs in data från Google Sheet
+headers = worksheet.row_values(1)
+data = worksheet.get_all_records()
+df = pd.DataFrame(data)
+if df.empty:
+    df = pd.DataFrame(columns=headers)
 
-# Hämta data från arket
-rows = worksheet.get_all_records()
-if not rows or list(rows[0].keys()) != required_headers:
-    worksheet.clear()
-    worksheet.append_row(required_headers)
-    df = pd.DataFrame(columns=required_headers)
-else:
-    df = pd.DataFrame(rows)
+st.title("📈 Fundamental Värdering med P/S-modell")
 
-# ----------------------- Del 2 -----------------------
-
-st.title("📈 Fundamental aktievärdering")
+st.subheader("➕ Lägg till eller uppdatera bolag")
 
 with st.form("add_stock_form"):
-    st.subheader("Lägg till eller uppdatera bolag")
-    ticker_input = st.text_input("Ange Ticker (t.ex. AAPL, MSFT)", "")
-    user_growth_2026 = st.number_input("Ange förväntad tillväxt % för 2026", min_value=-100.0, max_value=500.0, value=15.0, step=0.1)
-    submitted = st.form_submit_button("📥 Hämta & Lägg till / Uppdatera")
+    ticker_input = st.text_input("Ange Ticker (ex: AAPL, MSFT, NVDA)", "")
+    omsättning_2027 = st.number_input("Ange förväntad omsättning 2027 (MUSD):", min_value=0.0, step=0.1)
+    submitted = st.form_submit_button("Hämta & Uppdatera")
 
     if submitted and ticker_input:
         try:
@@ -53,269 +39,226 @@ with st.form("add_stock_form"):
             stock = yf.Ticker(ticker)
             info = stock.info
 
-            name = info.get("shortName", "Okänt")
-            current_price = round(info.get("currentPrice", 0), 2)
-            total_sales = info.get("totalRevenue", None)
-            ttm_sales = round(total_sales / 1e6, 2) if total_sales else 0
-            ttm_eps = round(info.get("trailingEps", 0), 2)
-            shares_outstanding = round(info.get("sharesOutstanding", 0), 2)
-            now = datetime.now().strftime("%Y-%m-%d %H:%M")
+            namn = info.get("shortName", "Okänt")
+            kurs = round(info.get("currentPrice", 0), 2)
+            omsättning_ttm = round(info.get("totalRevenue", 0) / 1e6, 2)
+            oms_2025 = round(info.get("revenueForecastNextFiscalYear", 0) / 1e6, 2)
+            oms_2026 = round(info.get("revenueForecastNext+1Year", 0) / 1e6, 2)
 
-            # Hämta historiska omsättningar och framtida tillväxt om tillgängligt
-            rev_2023 = info.get("revenue2023", 0) or 0
-            rev_2024 = info.get("revenue2024", 0) or 0
-            rev_2025 = info.get("revenue2025", 0) or 0
-            growth_2024 = info.get("growth2024", 0) or 0
-            growth_2025 = info.get("growth2025", 0) or 0
-            rev_2026 = rev_2025 * (1 + user_growth_2026 / 100) if rev_2025 else 0
+            updated = False
+            for i, row in df.iterrows():
+                if row["Ticker"] == ticker:
+                    df.at[i, "Bolag"] = namn
+                    df.at[i, "Aktuell kurs"] = kurs
+                    df.at[i, "Omsättning TTM"] = omsättning_ttm
+                    df.at[i, "Omsättning 2025"] = oms_2025
+                    df.at[i, "Omsättning 2026"] = oms_2026
+                    df.at[i, "Omsättning 2027"] = omsättning_2027
+                    df.at[i, "Senast uppdaterad"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+                    updated = True
+                    break
 
-            # Placeholder för P/S snitt – kan justeras i Del 3
-            ps_snitt = round(current_price / (ttm_sales / shares_outstanding), 2) if ttm_sales and shares_outstanding else 0
+            if not updated:
+                ny_rad = {
+                    "Bolag": namn,
+                    "Ticker": ticker,
+                    "Aktuell kurs": kurs,
+                    "Omsättning TTM": omsättning_ttm,
+                    "Omsättning 2025": oms_2025,
+                    "Omsättning 2026": oms_2026,
+                    "Omsättning 2027": omsättning_2027,
+                    "Senast uppdaterad": datetime.now().strftime("%Y-%m-%d %H:%M")
+                }
+                df = df.append(ny_rad, ignore_index=True)
 
-            new_data = {
-                "Bolag": name,
-                "Ticker": ticker,
-                "Senast uppdaterad": now,
-                "Aktuell kurs": current_price,
-                "TTM Sales": ttm_sales,
-                "TTM EPS": ttm_eps,
-                "Antal aktier": shares_outstanding,
-                "Omsättning 2023": rev_2023,
-                "Omsättning 2024": rev_2024,
-                "Omsättning 2025": rev_2025,
-                "Omsättning 2026": round(rev_2026, 2),
-                "P/S snitt": ps_snitt,
-                "Tillväxt 2024": growth_2024,
-                "Tillväxt 2025": growth_2025,
-                "Tillväxt 2026": user_growth_2026
-            }
+            worksheet.clear()
+            worksheet.append_row(df.columns.tolist())
+            for row in df.values.tolist():
+                worksheet.append_row(row)
 
-            if ticker in df["Ticker"].values:
-                row_idx = df[df["Ticker"] == ticker].index[0] + 2
-                for i, key in enumerate(required_headers):
-                    worksheet.update_cell(row_idx, i + 1, new_data[key])
-                st.success(f"{ticker} uppdaterad.")
-            else:
-                worksheet.append_row([new_data[h] for h in required_headers])
-                st.success(f"{ticker} tillagd.")
+            st.success(f"{ticker} uppdaterad.")
         except Exception as e:
-            st.error(f"❌ Något gick fel: {e}")
+            st.error(f"Något gick fel: {e}")
 
-# ----------------------- Del 3 -----------------------
+def beräkna_analys(df):
+    df["Snitt P/S"] = None
+    df["Målkurs 2025"] = None
+    df["Målkurs 2026"] = None
+    df["Målkurs 2027"] = None
+    df["Undervärdering (%)"] = None
 
-# Visa tabell
-st.subheader("📄 Aktiedata från Google Sheet")
-st.dataframe(df)
-
-# Beräkna målkurs för 2025, 2026, 2027 baserat på P/S snitt och omsättning
-def calculate_valuations(row):
-    try:
-        ps = float(row.get("P/S snitt", 0))
-        shares = float(row.get("Antal aktier", 0))
-
-        rev_2025 = float(row.get("Omsättning 2025", 0))
-        rev_2026 = float(row.get("Omsättning 2026", 0))
-
-        target_now = ps * rev_2025 * 1e6 / shares if ps and rev_2025 and shares else 0
-        target_2026 = ps * rev_2026 * 1e6 / shares if ps and rev_2026 and shares else 0
-
-        # Använd tillväxt för 2026 för att skatta 2027
-        growth_2026 = float(row.get("Tillväxt 2026", 0))
-        rev_2027 = rev_2026 * (1 + growth_2026 / 100) if rev_2026 else 0
-        target_2027 = ps * rev_2027 * 1e6 / shares if ps and rev_2027 and shares else 0
-
-        return round(target_now, 2), round(target_2026, 2), round(target_2027, 2)
-    except Exception:
-        return 0, 0, 0
-
-# Lägg till kolumner i df
-df["Målkurs 2025"] = 0.0
-df["Målkurs 2026"] = 0.0
-df["Målkurs 2027"] = 0.0
-
-for i, row in df.iterrows():
-    m25, m26, m27 = calculate_valuations(row)
-    df.at[i, "Målkurs 2025"] = m25
-    df.at[i, "Målkurs 2026"] = m26
-    df.at[i, "Målkurs 2027"] = m27
-
-# ----------------------- Del 4 -----------------------
-
-def visa_varderingsvy(df, vy_ar="2025"):
-    st.header("📊 Värderingsvy")
-
-    # Filtrera bort rader utan fullständig data
-    df_filtered = df.dropna(subset=[
-        "Bolag", "Ticker", "Aktuell kurs", f"Omsättning {vy_ar}", f"P/S snitt"
-    ])
-
-    if df_filtered.empty:
-        st.info("Ingen komplett data för att visa värderingsvyn.")
-        return
-
-    # Beräkna nuvarande P/S
-    df_filtered["P/S nu"] = df_filtered["Aktuell kurs"] / (df_filtered["Omsättning 2024"] / df_filtered["Antal aktier"])
-
-    # Beräkna målkurs för valt år
-    df_filtered["Målkurs"] = df_filtered[f"Omsättning {vy_ar}"] / df_filtered["Antal aktier"] * df_filtered["P/S snitt"]
-
-    # Undervärdering = målkurs - aktuell kurs
-    df_filtered["Undervärdering"] = df_filtered["Målkurs"] - df_filtered["Aktuell kurs"]
-
-    # Sortera
-    df_sorted = df_filtered.sort_values(by="Undervärdering", ascending=False).reset_index(drop=True)
-
-    # Navigering
-    st.session_state.setdefault("vy_index", 0)
-    if st.button("⬅️ Föregående"):
-        st.session_state["vy_index"] = max(0, st.session_state["vy_index"] - 1)
-    if st.button("➡️ Nästa"):
-        st.session_state["vy_index"] = min(len(df_sorted) - 1, st.session_state["vy_index"] + 1)
-
-    # Visa bolag
-    rad = df_sorted.iloc[st.session_state["vy_index"]]
-    st.subheader(f"{rad['Bolag']} ({rad['Ticker']})")
-    st.write(f"Aktuell kurs: {rad['Aktuell kurs']:.2f} USD")
-    st.write(f"P/S snitt: {rad['P/S snitt']:.2f}")
-    st.write(f"Omsättning {vy_ar}: {rad[f'Omsättning {vy_ar}']:.0f} MUSD")
-    st.write(f"Målkurs {vy_ar}: {rad['Målkurs']:.2f} USD")
-    st.write(f"Undervärdering: {rad['Undervärdering']:.2f} USD")
-
-# ----------------------- Del 5 -----------------------
-
-# Välj vilket år som ska styra undervärderingssorteringen
-st.subheader("📈 Värderingssortering")
-sort_year = st.selectbox("Sortera på undervärdering enligt år:", ["2025", "2026", "2027"])
-sort_column = f"Målkurs {sort_year}"
-
-# Filtrera bolag med kurs > 0 och målkurs > 0
-df_filtered = df[(df["Aktuell kurs"] > 0) & (df[sort_column] > 0)].copy()
-df_filtered["Undervärdering (%)"] = round((df_filtered[sort_column] - df_filtered["Aktuell kurs"]) / df_filtered["Aktuell kurs"] * 100, 2)
-df_filtered = df_filtered.sort_values(by="Undervärdering (%)", ascending=False).reset_index(drop=True)
-
-# Navigering mellan bolag
-if "current_index" not in st.session_state:
-    st.session_state.current_index = 0
-
-if not df_filtered.empty:
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("⬅️ Föregående") and st.session_state.current_index > 0:
-            st.session_state.current_index -= 1
-    with col2:
-        if st.button("➡️ Nästa") and st.session_state.current_index < len(df_filtered) - 1:
-            st.session_state.current_index += 1
-
-    bolag = df_filtered.iloc[st.session_state.current_index]
-
-    st.header("📊 Värderingsvy")
-    st.markdown(f"""
-    **{bolag['Bolag']} ({bolag['Ticker']})**  
-    📈 **Aktuell kurs:** {bolag['Aktuell kurs']:.2f} USD  
-    🔢 **P/S-snitt:** {bolag['P/S snitt']:.2f}  
-    📦 **Antal aktier:** {bolag['Antal aktier']:,}  
-    🧾 **Omsättning 2025:** {bolag['Omsättning 2025']:.2f} MUSD  
-    🔮 **Omsättning 2026:** {bolag['Omsättning 2026']:.2f} MUSD  
-    📉 **Tillväxt 2026:** {bolag['Tillväxt 2026']} %  
-    🎯 **Målkurs 2025:** {bolag['Målkurs 2025']:.2f} USD  
-    🎯 **Målkurs 2026:** {bolag['Målkurs 2026']:.2f} USD  
-    🎯 **Målkurs 2027:** {bolag['Målkurs 2027']:.2f} USD  
-    🧮 **Undervärdering:** {bolag['Undervärdering (%)']:.2f} %
-    """)
-else:
-    st.warning("Inga bolag med giltiga värden att visa.")
-
-# ----------------------- Del 6 -----------------------
-
-st.header("🧠 Investeringsförslag & Uppdatering")
-
-# Ange tillgängligt kapital
-kapital = st.number_input("Tillgängligt kapital (USD):", min_value=0.0, step=100.0)
-
-# Generera investeringsförslag
-if not df_filtered.empty:
-    bästa = df_filtered.iloc[0]
-    if bästa["Aktuell kurs"] <= kapital:
-        antal = int(kapital // bästa["Aktuell kurs"])
-        kostnad = antal * bästa["Aktuell kurs"]
-        st.success(f"📌 Köpförslag: {antal} st {bästa['Ticker']} för totalt {kostnad:.2f} USD.")
-    else:
-        st.info(f"💡 Bästa val är {bästa['Ticker']} ({bästa['Bolag']}) men du behöver minst {bästa['Aktuell kurs']:.2f} USD.")
-
-# Visa tabell för manuell inmatning av Omsättning 2027
-st.subheader("📤 Lägg till Omsättning 2027 manuellt")
-edited_df = st.data_editor(df[["Ticker", "Omsättning 2027"]], num_rows="dynamic")
-
-if st.button("💾 Spara ändringar för Omsättning 2027"):
-    for index, row in edited_df.iterrows():
-        ticker = row["Ticker"]
-        value = row["Omsättning 2027"]
+    for i, row in df.iterrows():
         try:
-            sheet_row = df[df["Ticker"] == ticker].index[0] + 2
-            col_idx = df.columns.get_loc("Omsättning 2027") + 1
-            worksheet.update_cell(sheet_row, col_idx, value)
+            ttm = row["Omsättning TTM"]
+            kurs = row["Aktuell kurs"]
+            ps_ttm = kurs / ttm if ttm else None
+
+            snitt_ps = ps_ttm  # Här kan man lägga till historiska P/S om tillgängligt
+            df.at[i, "Snitt P/S"] = round(snitt_ps, 2) if snitt_ps else None
+
+            for år in [2025, 2026, 2027]:
+                omsättning = row.get(f"Omsättning {år}")
+                if pd.notna(snitt_ps) and pd.notna(omsättning) and omsättning > 0:
+                    målkurs = snitt_ps * omsättning
+                    df.at[i, f"Målkurs {år}"] = round(målkurs, 2)
+
+            if pd.notna(df.at[i, "Målkurs 2025"]) and kurs > 0:
+                undervärde = (df.at[i, "Målkurs 2025"] - kurs) / kurs * 100
+                df.at[i, "Undervärdering (%)"] = round(undervärde, 2)
         except Exception as e:
-            st.error(f"Fel vid uppdatering för {ticker}: {e}")
-    st.success("Omsättning 2027 uppdaterad!")
+            print(f"Fel vid beräkning för {row['Ticker']}: {e}")
+    return df
 
-# Uppdatera all data-knapp
-if st.button("🔄 Uppdatera alla bolag"):
-    try:
-        tickers = df["Ticker"].dropna().unique().tolist()
-        for ticker in tickers:
-            stock = yf.Ticker(ticker)
-            info = stock.info
-            hist = stock.history(period="1y")
+def uppdatera_alla_bolag(df, worksheet):
+    from datetime import datetime
+    import yfinance as yf
 
-            current_price = round(info.get("currentPrice", 0), 2)
-            shares_out = info.get("sharesOutstanding", 0)
+    uppdaterad_df = df.copy()
+    for index, row in df.iterrows():
+        ticker = row["Ticker"]
+        try:
+            aktie = yf.Ticker(ticker)
+            info = aktie.info
 
-            oms_hist = []
-            p_s_hist = []
+            nuvarande_kurs = round(info.get("currentPrice", 0), 2)
+            ttm_sales = round(info.get("totalRevenue", 0) / info.get("sharesOutstanding", 1), 2) if info.get("totalRevenue") else None
+            omsättning_2025 = info.get("revenueEstimate", {}).get("2025")  # Custom key
+            omsättning_2026 = info.get("revenueEstimate", {}).get("2026")  # Custom key
 
-            for q in hist.resample("Q").last().iterrows():
-                kurs = q[1]["Close"]
-                quarter_sales = info.get("totalRevenue", 0)  # Fallback
-                p_s = (kurs * shares_out) / quarter_sales if quarter_sales else 0
-                if p_s > 0:
-                    p_s_hist.append(p_s)
+            uppdaterad_df.at[index, "Aktuell kurs"] = nuvarande_kurs
+            uppdaterad_df.at[index, "Omsättning TTM"] = ttm_sales
+            uppdaterad_df.at[index, "Senast uppdaterad"] = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-            snitt_p_s = round(sum(p_s_hist[-4:]) / len(p_s_hist[-4:]), 2) if p_s_hist else 0
-            oms_2025 = info.get("revenueEstimate", {}).get("2025", 0) / 1e6 if info.get("revenueEstimate") else 0
-            oms_2026 = info.get("revenueEstimate", {}).get("2026", 0) / 1e6 if info.get("revenueEstimate") else 0
+            if omsättning_2025:
+                uppdaterad_df.at[index, "Omsättning 2025"] = round(omsättning_2025 / info.get("sharesOutstanding", 1), 2)
+            if omsättning_2026:
+                uppdaterad_df.at[index, "Omsättning 2026"] = round(omsättning_2026 / info.get("sharesOutstanding", 1), 2)
 
-            tillväxt_2026 = round((oms_2026 - oms_2025) / oms_2025 * 100, 2) if oms_2025 > 0 else 0
-            oms_2027 = df[df["Ticker"] == ticker]["Omsättning 2027"].values[0]
+        except Exception as e:
+            st.warning(f"Kunde inte uppdatera {ticker}: {e}")
 
-            målkurs_2025 = snitt_p_s * oms_2025 / (shares_out / 1e6) if shares_out else 0
-            målkurs_2026 = snitt_p_s * oms_2026 / (shares_out / 1e6) if shares_out else 0
-            målkurs_2027 = snitt_p_s * oms_2027 / (shares_out / 1e6) if shares_out else 0
+    # Skriv tillbaka uppdaterad data till Google Sheet
+    worksheet.clear()
+    worksheet.append_row(list(uppdaterad_df.columns))
+    for _, row in uppdaterad_df.iterrows():
+        worksheet.append_row([row[col] if pd.notna(row[col]) else "" for col in uppdaterad_df.columns])
 
-            idx = df[df["Ticker"] == ticker].index[0] + 2
-            update_map = {
-                "Aktuell kurs": current_price,
-                "P/S snitt": snitt_p_s,
-                "Omsättning 2025": oms_2025,
-                "Omsättning 2026": oms_2026,
-                "Tillväxt 2026": tillväxt_2026,
-                "Målkurs 2025": målkurs_2025,
-                "Målkurs 2026": målkurs_2026,
-                "Målkurs 2027": målkurs_2027
-            }
+    return uppdaterad_df
 
-            for col, val in update_map.items():
-                col_idx = df.columns.get_loc(col) + 1
-                worksheet.update_cell(idx, col_idx, round(val, 2))
-        st.success("Alla bolag uppdaterade!")
-    except Exception as e:
-        st.error(f"Något gick fel: {e}")
+def beräkna_målkurser(df):
+    df = df.copy()
 
-# ----------------------- Del 7 -----------------------
+    for år in ["2025", "2026", "2027"]:
+        kol_omsättning = f"Omsättning {år}"
+        kol_målkurs = f"Målkurs {år}"
+        kol_p_s = "P/S TTM"
 
+        if kol_omsättning not in df.columns:
+            df[kol_omsättning] = None
+
+        df[kol_målkurs] = None
+        for i, row in df.iterrows():
+            try:
+                if (
+                    pd.notna(row.get(kol_omsättning))
+                    and pd.notna(row.get(kol_p_s))
+                    and row.get(kol_p_s) != 0
+                ):
+                    df.at[i, kol_målkurs] = round(row[kol_p_s] * row[kol_omsättning], 2)
+            except Exception:
+                df.at[i, kol_målkurs] = None
+
+    return df
+
+
+def filtrera_och_sortera(df, sortera_efter="2025"):
+    kolumn = f"Målkurs {sortera_efter}"
+    df_filtered = df.copy()
+    df_filtered = df_filtered[
+        (df_filtered["Aktuell kurs"].notna()) & (df_filtered[kolumn].notna())
+    ]
+    df_filtered["Undervärdering (%)"] = (
+        (df_filtered[kolumn] - df_filtered["Aktuell kurs"])
+        / df_filtered["Aktuell kurs"]
+        * 100
+    ).round(2)
+    df_filtered = df_filtered.sort_values(by="Undervärdering (%)", ascending=False)
+
+    return df_filtered.reset_index(drop=True)
+
+# ===== VÄRDERINGSVY =====
+st.header("📊 Värderingsvy")
+
+df = uppdatera_aktuell_kurs(df)
+df = beräkna_målkurser(df)
+
+sorteringsval = st.radio(
+    "Sortera undervärdering efter målkurs för år:",
+    ["2025", "2026", "2027"],
+    horizontal=True,
+)
+
+df_filtered = filtrera_och_sortera(df, sortera_efter=sorteringsval)
+
+if not df_filtered.empty:
+    if "index" not in st.session_state:
+        st.session_state.index = 0
+
+    max_index = len(df_filtered) - 1
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("⬅️ Föregående") and st.session_state.index > 0:
+            st.session_state.index -= 1
+    with col3:
+        if st.button("Nästa ➡️") and st.session_state.index < max_index:
+            st.session_state.index += 1
+
+    bolagsrad = df_filtered.iloc[st.session_state.index]
+    st.subheader(f"{bolagsrad['Bolag']} ({bolagsrad['Ticker']})")
+
+    st.markdown(f"""
+    **Aktuell kurs**: {bolagsrad['Aktuell kurs']} USD  
+    **P/S TTM**: {bolagsrad['P/S TTM']}  
+    **Omsättning 2025**: {bolagsrad.get('Omsättning 2025', '–')}  
+    **Målkurs 2025**: {bolagsrad.get('Målkurs 2025', '–')}  
+    **Målkurs 2026**: {bolagsrad.get('Målkurs 2026', '–')}  
+    **Målkurs 2027**: {bolagsrad.get('Målkurs 2027', '–')}  
+    **Undervärdering enligt {sorteringsval}**: {bolagsrad['Undervärdering (%)']} %
+    """)
+
+else:
+    st.info("Ingen data att visa. Lägg till bolag eller fyll i omsättningar.")
+
+# ===== PORTFÖLJ & KÖPREKOMMENDATION =====
+st.header("💼 Portfölj & Köprekommendation")
+
+with st.form("portfolio_form"):
+    st.subheader("Ange dina innehav")
+    tickers_innehav = st.multiselect("Vilka tickers äger du?", df["Ticker"].unique())
+    kapital = st.number_input("Tillgängligt kapital (kr):", min_value=0, value=1000, step=100)
+    submit_köp = st.form_submit_button("Beräkna köprekommendation")
+
+    if submit_köp:
+        df = beräkna_målkurser(df)
+        undervärderade = df[df["Ticker"].isin(tickers_innehav)].copy()
+        undervärderade["Skillnad"] = undervärderade["Målkurs 2025"] - undervärderade["Aktuell kurs"]
+        undervärderade = undervärderade.sort_values(by="Skillnad", ascending=False)
+
+        st.subheader("📈 Rekommendation:")
+        if not undervärderade.empty:
+            bästa = undervärderade.iloc[0]
+            pris = bästa["Aktuell kurs"]
+            if pris <= kapital:
+                st.success(f"Köp **{bästa['Ticker']}** ({bästa['Bolag']}) för {pris} USD.")
+            else:
+                st.warning(f"**{bästa['Ticker']}** är mest attraktiv, men kräver {pris} USD – du behöver mer kapital.")
+        else:
+            st.info("Inget innehav matchar kriterierna eller saknar data.")
+
+# ===== MAIN =====
 def main():
-    st.set_page_config(page_title="Aktievärdering & Investeringsförslag", layout="wide")
-    # Kör hela appen
-    pass  # Allt körs redan i huvudflödet (det finns ingen separat struktur att kapsla in)
+    pass  # Allt körs redan i filens toppnivå ovan
 
 if __name__ == "__main__":
     main()
